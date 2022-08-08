@@ -3,7 +3,10 @@ import os
 import json
 import warnings
 import numpy as np
+import meshio
 from torch.utils.data import Dataset
+import itertools
+
 warnings.filterwarnings('ignore')
 
 def pc_normalize(pc):
@@ -12,6 +15,43 @@ def pc_normalize(pc):
     m = np.max(np.sqrt(np.sum(pc ** 2, axis=1)))
     pc = pc / m
     return pc
+
+class P2ILFDataset(Dataset):
+
+    def __init__ (self, root):
+
+        self.root = root
+
+        models_dir = os.path.join(root, "models")
+        labels_dir = os.path.join(root, "labels")
+        models = [ os.path.join(models_dir, f) for f in os.listdir(models_dir)]
+        labels = [os.path.join(labels_dir, f) for f in os.listdir(labels_dir)]
+
+
+        #Duplicate data items so that we can run with batch size = 2
+        # TOOD: Fix this?
+        self.datapath = list(itertools.chain.from_iterable(itertools.repeat(x, 2) for x in models))
+        self.labelpath = list(itertools.chain.from_iterable(itertools.repeat(x, 2) for x in labels))
+
+        self.seg_classes = {'Liver': [0, 1, 2]}
+
+    def __getitem__(self, index):
+        file = self.datapath[index]
+
+        mesh = meshio.read(file)
+
+        points_and_normals = np.hstack([mesh.points, mesh.point_data['obj:vn']])
+
+        labels = np.loadtxt(self.labelpath[index])
+
+        cat =  np.array([0]).astype(np.int32)
+        return points_and_normals, cat, labels
+
+    def __len__(self):
+        return len(self.datapath)
+
+        
+
 
 class PartNormalDataset(Dataset):
     def __init__(self,root = './data/shapenetcore_partanno_segmentation_benchmark_v0_normal', npoints=2500, split='train', class_choice=None, normal_channel=False):

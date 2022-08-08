@@ -12,24 +12,30 @@ import importlib
 import shutil
 import provider
 import numpy as np
+import wandb
 
 from pathlib import Path
 from tqdm import tqdm
-from data_utils.ShapeNetDataLoader import PartNormalDataset
+from data_utils.ShapeNetDataLoader import PartNormalDataset, P2ILFDataset
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = BASE_DIR
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 
-seg_classes = {'Earphone': [16, 17, 18], 'Motorbike': [30, 31, 32, 33, 34, 35], 'Rocket': [41, 42, 43],
-               'Car': [8, 9, 10, 11], 'Laptop': [28, 29], 'Cap': [6, 7], 'Skateboard': [44, 45, 46], 'Mug': [36, 37],
-               'Guitar': [19, 20, 21], 'Bag': [4, 5], 'Lamp': [24, 25, 26, 27], 'Table': [47, 48, 49],
-               'Airplane': [0, 1, 2, 3], 'Pistol': [38, 39, 40], 'Chair': [12, 13, 14, 15], 'Knife': [22, 23]}
+# seg_classes = {'Earphone': [16, 17, 18], 'Motorbike': [30, 31, 32, 33, 34, 35], 'Rocket': [41, 42, 43],
+#                'Car': [8, 9, 10, 11], 'Laptop': [28, 29], 'Cap': [6, 7], 'Skateboard': [44, 45, 46], 'Mug': [36, 37],
+#                'Guitar': [19, 20, 21], 'Bag': [4, 5], 'Lamp': [24, 25, 26, 27], 'Table': [47, 48, 49],
+#                'Airplane': [0, 1, 2, 3], 'Pistol': [38, 39, 40], 'Chair': [12, 13, 14, 15], 'Knife': [22, 23]}
+
+seg_classes = {'Liver': [0, 1, 2]}
 seg_label_to_cat = {}  # {0:Airplane, 1:Airplane, ...49:Table}
 for cat in seg_classes.keys():
     for label in seg_classes[cat]:
         seg_label_to_cat[label] = cat
 
+# experiment = wandb.init(project='P2ILF 3D Pointnet++', entity="compass-ucl", resume='allow', anonymous='must',
+#                         save_code=True)
+# experiment.log_code(".")
 
 def inplace_relu(m):
     classname = m.__class__.__name__
@@ -47,7 +53,7 @@ def to_categorical(y, num_classes):
 def parse_args():
     parser = argparse.ArgumentParser('Model')
     parser.add_argument('--model', type=str, default='pointnet_part_seg', help='model name')
-    parser.add_argument('--batch_size', type=int, default=16, help='batch Size during training')
+    parser.add_argument('--batch_size', type=int, default=2, help='batch Size during training')
     parser.add_argument('--epoch', default=251, type=int, help='epoch to run')
     parser.add_argument('--learning_rate', default=0.001, type=float, help='initial learning rate')
     parser.add_argument('--gpu', type=str, default='0', help='specify GPU devices')
@@ -98,17 +104,23 @@ def main(args):
     log_string('PARAMETER ...')
     log_string(args)
 
-    root = 'data/shapenetcore_partanno_segmentation_benchmark_v0_normal/'
+    root = 'C:\Code\p2ilf_miccai_2022\data\P2ILF_MICCAI2022_Edition1_trainingData'
 
-    TRAIN_DATASET = PartNormalDataset(root=root, npoints=args.npoint, split='trainval', normal_channel=args.normal)
-    trainDataLoader = torch.utils.data.DataLoader(TRAIN_DATASET, batch_size=args.batch_size, shuffle=True, num_workers=10, drop_last=True)
-    TEST_DATASET = PartNormalDataset(root=root, npoints=args.npoint, split='test', normal_channel=args.normal)
-    testDataLoader = torch.utils.data.DataLoader(TEST_DATASET, batch_size=args.batch_size, shuffle=False, num_workers=10)
+    TRAIN_DATASET = P2ILFDataset(root=root)
+    TEST_DATASET = P2ILFDataset(root=root)
+
+    trainDataLoader = torch.utils.data.DataLoader(TRAIN_DATASET, batch_size=args.batch_size, shuffle=False, num_workers=1)
+    testDataLoader = torch.utils.data.DataLoader(TEST_DATASET, batch_size=args.batch_size, shuffle=False, num_workers=1)
+#   TRAIN_DATASET = PartNormalDataset(root=root, npoints=args.npoint, split='trainval', normal_channel=args.normal)
+
+    # trainDataLoader = torch.utils.data.DataLoader(TRAIN_DATASET, batch_size=args.batch_size, shuffle=True, num_workers=10, drop_last=True)
+    # TEST_DATASET = PartNormalDataset(root=root, npoints=args.npoint, split='test', normal_channel=args.normal)
+    # testDataLoader = torch.utils.data.DataLoader(TEST_DATASET, batch_size=args.batch_size, shuffle=False, num_workers=10)
     log_string("The number of training data is: %d" % len(TRAIN_DATASET))
     log_string("The number of test data is: %d" % len(TEST_DATASET))
 
-    num_classes = 16
-    num_part = 50
+    num_classes = 1
+    num_part = 3
 
     '''MODEL LOADING'''
     MODEL = importlib.import_module(args.model)
@@ -196,7 +208,7 @@ def main(args):
             pred_choice = seg_pred.data.max(1)[1]
 
             correct = pred_choice.eq(target.data).cpu().sum()
-            mean_correct.append(correct.item() / (args.batch_size * args.npoint))
+            mean_correct.append(correct.item() / (args.batch_size * args.npoint)) #TODO: Npoint not correct, 
             loss = criterion(seg_pred, target, trans_feat)
             loss.backward()
             optimizer.step()
@@ -233,6 +245,20 @@ def main(args):
                     cat = seg_label_to_cat[target[i, 0]]
                     logits = cur_pred_val_logits[i, :, :]
                     cur_pred_val[i, :] = np.argmax(logits[:, seg_classes[cat]], 1) + seg_classes[cat][0]
+
+
+                point_cloud_target = np.vstack((
+                    points.cpu().numpy()[0,:3,:].squeeze(),
+                    target[0,:].squeeze())
+                )
+
+                point_cloud_predict = np.vstack((
+                    points.cpu().numpy()[0,:3,:].squeeze(),
+                    cur_pred_val[0,:].squeeze())
+                )
+
+                # wandb.log({"point_cloud_target": wandb.Object3D(point_cloud_target),
+                #            "point_cloud_predict": wandb.Object3D(point_cloud_predict)})
 
                 correct = np.sum(cur_pred_val == target)
                 total_correct += correct

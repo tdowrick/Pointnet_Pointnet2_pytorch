@@ -17,7 +17,7 @@ class get_model(nn.Module):
         self.sa3 = PointNetSetAbstraction(npoint=None, radius=None, nsample=None, in_channel=512 + 3, mlp=[256, 512, 1024], group_all=True)
         self.fp3 = PointNetFeaturePropagation(in_channel=1536, mlp=[256, 256])
         self.fp2 = PointNetFeaturePropagation(in_channel=576, mlp=[256, 128])
-        self.fp1 = PointNetFeaturePropagation(in_channel=150+additional_channel, mlp=[128, 128])
+        self.fp1 = PointNetFeaturePropagation(in_channel=128 + 1 + 6 +additional_channel, mlp=[128, 128])
         self.conv1 = nn.Conv1d(128, 128, 1)
         self.bn1 = nn.BatchNorm1d(128)
         self.drop1 = nn.Dropout(0.5)
@@ -38,7 +38,7 @@ class get_model(nn.Module):
         # Feature Propagation layers
         l2_points = self.fp3(l2_xyz, l3_xyz, l2_points, l3_points)
         l1_points = self.fp2(l1_xyz, l2_xyz, l1_points, l2_points)
-        cls_label_one_hot = cls_label.view(B,16,1).repeat(1,1,N)
+        cls_label_one_hot = cls_label.view(B,1,1).repeat(1,1,N)
         l0_points = self.fp1(l0_xyz, l1_xyz, torch.cat([cls_label_one_hot,l0_xyz,l0_points],1), l1_points)
         # FC layers
         feat = F.relu(self.bn1(self.conv1(l0_points)))
